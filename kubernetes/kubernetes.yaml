@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+   name: msakkaapi-deployment
+spec:
+   replicas: 3
+   selector:
+     matchLabels:
+       app: msakkaapi
+   template:
+     metadata:
+       labels:
+         app: msakkaapi
+     spec:
+       containers:
+       - name: msakkaapi
+         image: igorvtorres/msakkaapi
+         env:
+         - name: MONGO_URL
+           value: "mongo-0.mongo.default.svc.cluster.local:27017"
+         #- name: MONGO_USER
+         #  value: "admin"
+         #- name: MONGO_PASSWORD
+         #  value: "admin"
+         imagePullPolicy: Always
+         ports:
+         - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+    name: msakkaapi-deployment
+    labels:
+      app: msakkaapi
+spec:
+   type: NodePort
+   ports:
+   - port: 8080
+     targetPort: 8080
+   selector:
+     app: msakkaapi
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: akka-ingress
+  annotations:
+    kubernetes.io/ingress.class: "public"
+    ingress.kubernetes.io/rewrite-target: /
+    #nginx.ingress.kubernetes.io/default-backend: msakkaapi-deployment
+spec:
+  defaultBackend:
+    service:
+      name: msakkaapi-deployment
+      port:
+        number: 8080
+  rules:
+  - host: my.akka.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: msakkaapi-deployment
+            port:
+              number: 8080
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+ name: local-storage
+provisioner: kubernetes.io/no-provisioner
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: default-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: default
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+spec:
+  selector:
+    matchLabels:
+      role: mongo
+  serviceName: "mongo"
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        role: mongo
+    spec:
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: mongodb-volume
+      containers:
+      - name: mongo
+        image: mongo
+        env:
+        #- name: MONGO_INITDB_ROOT_USERNAME
+        #  value: "admin"
+        #- name: MONGO_INITDB_ROOT_PASSWORD
+        #  value: "admin"
+        command:
+          - mongod
+          - "--bind_ip"
+          - "0.0.0.0"
+          - "--dbpath"
+          - "/data/db"
+        ports:
+          - containerPort: 27017
+        volumeMounts:
+          - name: mongodb-volume
+            mountPath: /data/db
+  volumeClaimTemplates:
+  - metadata:
+      name: mongodb-volume
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  labels:
+    name: mongo
+spec:
+  ports:
+    - port: 27017
+      targetPort: 27017
+  clusterIP: None
+  selector:
+    role: mongo
